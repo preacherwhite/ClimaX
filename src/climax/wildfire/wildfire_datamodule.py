@@ -646,7 +646,7 @@ class WildfireDataModule(LightningDataModule):
             temp_loader = DataLoader(
                 temp_dataset,
                 batch_size=self.hparams.batch_size,
-                num_workers=max(0, self.hparams.num_workers // 2), # Use fewer workers for temp calc
+                num_workers=os.cpu_count()//self.hparams.num_workers, # Use fewer workers for temp calc
                 pin_memory=False # No need to pin memory for calculation
             )
 
@@ -786,7 +786,7 @@ class WildfireDataModule(LightningDataModule):
             dataset,
             batch_size=self.hparams.batch_size,
             sampler=torch.utils.data.SubsetRandomSampler(indices), # Sample indices
-            num_workers=max(0, self.hparams.num_workers // 2),
+            num_workers=os.cpu_count()//self.hparams.num_workers,
             pin_memory=False
         )
 
@@ -832,7 +832,7 @@ class WildfireDataModule(LightningDataModule):
             self.dataset_train,
             batch_size=self.hparams.batch_size,
             shuffle=True, # Shuffle training data
-            num_workers=self.hparams.num_workers,
+            num_workers=os.cpu_count()//self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
             collate_fn=collate_fn, # Assumes collate_fn is defined globally or imported
             persistent_workers=True if self.hparams.num_workers > 0 else False, # Can speed up epoch starts
@@ -852,7 +852,7 @@ class WildfireDataModule(LightningDataModule):
             self.dataset_val,
             batch_size=self.hparams.batch_size,
             shuffle=False, # No shuffling for validation
-            num_workers=self.hparams.num_workers,
+            num_workers=os.cpu_count()//self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
             collate_fn=collate_fn,
             persistent_workers=True if self.hparams.num_workers > 0 else False,
@@ -872,7 +872,7 @@ class WildfireDataModule(LightningDataModule):
             self.dataset_test,
             batch_size=self.hparams.batch_size,
             shuffle=False, # No shuffling for test
-            num_workers=self.hparams.num_workers,
+            num_workers=os.cpu_count()//self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
             collate_fn=collate_fn,
             persistent_workers=True if self.hparams.num_workers > 0 else False,
@@ -893,7 +893,7 @@ class WildfireDataModule(LightningDataModule):
             self.dataset_test, # Or self.dataset_predict if you add it
             batch_size=self.hparams.batch_size,
             shuffle=False,
-            num_workers=self.hparams.num_workers,
+            num_workers=os.cpu_count()//self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
             collate_fn=collate_fn,
             persistent_workers=True if self.hparams.num_workers > 0 else False,
