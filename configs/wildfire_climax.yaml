@@ -1,0 +1,137 @@
+# Wildfire ClimaX Configuration for Lightning CLI
+# NOTE: This config assumes 'datamodule_class' is provided directly to LightningCLI in the script.
+seed_everything: 42
+
+# ---------------------------- TRAINER -------------------------------------------
+trainer:
+  default_root_dir: ${oc.env:OUTPUT_DIR,./wildfire_outputs}
+  precision: 16  # Use 16-bit mixed precision
+  accelerator: gpu
+  devices: 1
+  strategy:
+    class_path: pytorch_lightning.strategies.DDPStrategy
+    init_args:
+      find_unused_parameters: false
+      static_graph: true
+
+  gradient_clip_val: 1.0
+  enable_progress_bar: true
+  sync_batchnorm: true
+  enable_checkpointing: true
+  resume_from_checkpoint: null
+  fast_dev_run: false
+
+  max_epochs: 10
+  log_every_n_steps: 10
+
+  logger:
+    class_path: pytorch_lightning.loggers.tensorboard.TensorBoardLogger
+    init_args:
+      save_dir: ${trainer.default_root_dir}/logs
+      name: "wildfire_climax"
+      version: null
+      log_graph: false
+      default_hp_metric: true
+      prefix: ""
+
+  callbacks:
+    - class_path: pytorch_lightning.callbacks.LearningRateMonitor
+      init_args:
+        logging_interval: "step"
+
+    - class_path: pytorch_lightning.callbacks.ModelCheckpoint
+      init_args:
+        dirpath: "${trainer.default_root_dir}/checkpoints"
+        monitor: "val/rmse"
+        mode: "min"
+        save_top_k: 1
+        save_last: true
+        verbose: false
+        filename: "step_{step:06d}-val_rmse_{val/rmse:.4f}"
+        auto_insert_metric_name: false
+
+    - class_path: pytorch_lightning.callbacks.EarlyStopping
+      init_args:
+        monitor: "val/rmse"
+        mode: "min"
+        patience: 10
+        min_delta: 0.001
+
+    - class_path: pytorch_lightning.callbacks.RichProgressBar
+
+# ---------------------------- MODEL -------------------------------------------
+model:
+    lr: 1e-4
+    beta_1: 0.9
+    beta_2: 0.95
+    weight_decay: 1e-5
+    warmup_epochs: 0
+    max_epochs: 10
+    warmup_start_factor: 1
+    eta_min: 1e-8
+    pretrained_path: ""
+    prediction_range: 7
+
+    # Network architecture passed to the model's init
+    net:
+      class_path: climax.arch.ClimaX
+      init_args:
+        default_vars: [
+          "M11", "I2", "I1", "NDVI_last", "EVI2_last", "total precipitation",
+          "wind speed", "wind direction", "minimum temperature", "maximum temperature",
+          "energy release component", "specific humidity", "slope", "aspect",
+          "elevation", "pdsi", "LC_Type1", "forecast total precipitation",
+          "forecast wind speed", "forecast wind direction", "forecast temperature",
+          "forecast specific humidity"
+        ]
+        img_size: [256, 256]
+        patch_size: 16
+        embed_dim: 768
+        depth: 12
+        decoder_depth: 2
+        num_heads: 12
+        mlp_ratio: 4
+        drop_path: 0.1
+        drop_rate: 0.1
+
+# ---------------------------- DATA -------------------------------------------
+data:
+  # Parameters below are passed directly as **kwargs to WildfireDataModule.__init__
+  # This structure assumes 'datamodule_class=WildfireDataModule' is passed to LightningCLI constructor.
+
+  root_dir: /vast/palmer/scratch/wong/dhw33/wildfirets # Root directory containing year folders
+  variables: [
+    # Must match the order expected by the pre-calculated means/stds and the model's default_vars
+    "M11", "I2", "I1", "NDVI_last", "EVI2_last", "total precipitation",
+    "wind speed", "wind direction", "minimum temperature", "maximum temperature",
+    "energy release component", "specific humidity", "slope", "aspect",
+    "elevation", "pdsi", "LC_Type1", "forecast total precipitation",
+    "forecast wind speed", "forecast wind direction", "forecast temperature",
+    "forecast specific humidity"
+  ]
+
+  # Pre-calculated Normalization Statistics
+  means: [0.21029, 0.373954, 0.294503, 0.344969, 0.199557, 1.928774, 3.174273, -0.100475, 219.185318, 229.286575, 25.870285, 0.005086, 2.724119, 0.02126, -1572.413208, 0.98446, 0.0, 41.989445, 2.245609, 0.046645, 13.531087, 0.007725]
+  stds: [0.14282, 0.247183, 0.279785, 0.2949, 0.184372, 6.186752, 2.224253, 0.645165, 113.057312, 118.311935, 23.38246, 0.004709, 4.827886, 0.642565, 8102.003906, 2.537376, 1.0, 68.801041, 1.645445, 0.67189, 10.676199, 0.004733]
+
+  # Forecast parameters
+  prediction_range: 7     # Max days ahead for target data
+  min_prediction_range: 1 # Min days ahead for target data
+  random_lead_time: True  # Sample lead time randomly in [min, max] range during training
+
+  # Paths (set to null to let DataModule try finding them in root_dir)
+  missing_regions_path: null
+  polygon_coords_path: null
+
+  # Data processing parameters
+  patch_size: [256, 256] # Target height/width for each data patch
+
+  # Data split parameters
+  val_ratio: 0.1
+  test_ratio: 0.1
+  random_seed: 42 # Seed for train/val/test split shuffling
+
+  # DataLoader parameters
+  batch_size: 24
+  num_workers: 1
+  pin_memory: true

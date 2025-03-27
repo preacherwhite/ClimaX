@@ -10,26 +10,26 @@ def mse(pred, y, vars, lat=None, mask=None):
     """Mean squared error
 
     Args:
-        pred: [B, L, V*p*p]
+        pred: [B, V, H, W]
         y: [B, V, H, W]
         vars: list of variable names
+        lat: not used, kept for compatibility
+        mask: optional mask for masked evaluation
     """
-
-    loss = (pred - y) ** 2
+    error = (pred - y) ** 2  # [B, V, H, W]
 
     loss_dict = {}
-
     with torch.no_grad():
         for i, var in enumerate(vars):
             if mask is not None:
-                loss_dict[var] = (loss[:, i] * mask).sum() / mask.sum()
+                loss_dict[var] = (error[:, i] * mask).sum() / mask.sum()
             else:
-                loss_dict[var] = loss[:, i].mean()
+                loss_dict[var] = error[:, i].mean()
 
     if mask is not None:
-        loss_dict["loss"] = (loss.mean(dim=1) * mask).sum() / mask.sum()
+        loss_dict["loss"] = (error.mean(dim=1) * mask).sum() / mask.sum()
     else:
-        loss_dict["loss"] = loss.mean(dim=1).mean()
+        loss_dict["loss"] = error.mean()
 
     return loss_dict
 
@@ -307,3 +307,54 @@ def lat_weighted_mean_bias(pred, y, transform, vars, lat, log_steps, log_days, c
     loss_dict["mean_bias"] = np.mean([loss_dict[k].cpu() for k in loss_dict.keys()])
 
     return loss_dict
+
+
+def mse_val(pred, y, transform, vars, lat, clim, log_postfix):
+    """Mean squared error for validation
+    Args:
+        y: [B, V, H, W]
+        pred: [B, V, H, W]
+        vars: list of variable names
+        transform: transform function (not used in MSE)
+        lat: not used, kept for compatibility
+        clim: not used, kept for compatibility
+        log_postfix: string to append to metric names in logs
+    """
+    error = (pred - y) ** 2  # [B, V, H, W]
+
+    loss_dict = {}
+    with torch.no_grad():
+        for i, var in enumerate(vars):
+            loss_dict[f"mse_{var}_{log_postfix}"] = error[:, i].mean()
+
+    # Calculate average MSE across all variables
+    loss_dict["mse"] = np.mean([loss_dict[k].cpu() for k in loss_dict.keys()])
+
+    return loss_dict
+
+
+def rmse_val(pred, y, transform, vars, lat, clim, log_postfix):
+    """Root mean squared error for validation
+    Args:
+        y: [B, V, H, W]
+        pred: [B, V, H, W]
+        vars: list of variable names
+        transform: transform function to apply before computing RMSE
+        lat: not used, kept for compatibility
+        clim: not used, kept for compatibility
+        log_postfix: string to append to metric names in logs
+    """
+    if transform is not None:
+        pred = transform(pred)
+    error = (pred - y) ** 2  # [B, V, H, W]
+
+    loss_dict = {}
+    with torch.no_grad():
+        for i, var in enumerate(vars):
+            loss_dict[f"rmse_{var}_{log_postfix}"] = torch.sqrt(error[:, i].mean())
+
+    # Calculate average RMSE across all variables
+    loss_dict["rmse"] = np.mean([loss_dict[k].cpu() for k in loss_dict.keys()])
+
+    return loss_dict
+
