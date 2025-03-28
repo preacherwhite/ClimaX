@@ -359,6 +359,7 @@ class WildfireDataModule(LightningDataModule):
         batch_size=32,
         num_workers=4,
         pin_memory=True,
+        excluded_vars=None,  # <-- Add excluded variables parameter
     ):
         """
         Args:
@@ -379,11 +380,17 @@ class WildfireDataModule(LightningDataModule):
             batch_size (int, optional): Number of samples per batch. Defaults to 32.
             num_workers (int, optional): Number of subprocesses for data loading. Defaults to 4.
             pin_memory (bool, optional): If True, copies Tensors into CUDA pinned memory before returning them. Defaults to True.
+            excluded_vars (list[str], optional): List of variable names to exclude from processing. Defaults to None.
         """
         super().__init__()
         # Save hyperparameters, including the new means and stds
         # logger=False prevents these from cluttering tensorboard hparams tab
         self.save_hyperparameters(logger=False)
+        
+        # Initialize excluded_vars if not provided
+        self.excluded_vars = excluded_vars if excluded_vars is not None else []
+        if self.excluded_vars:
+            print(f"INFO: Variables to be excluded: {self.excluded_vars}")
 
         # --- Validation for provided means and stds ---
         if self.hparams.means is not None or self.hparams.stds is not None:
@@ -428,8 +435,7 @@ class WildfireDataModule(LightningDataModule):
         self.dataset_val = None
         self.dataset_test = None
         self.all_files = [] # Store all found file paths
-
-
+        
     def _discover_years(self, root_dir):
         """Discover available year subdirectories in the data root directory."""
         available_years = []
@@ -447,6 +453,11 @@ class WildfireDataModule(LightningDataModule):
 
         available_years.sort()
         return available_years
+        
+    def set_excluded_vars(self, excluded_vars):
+        """Update the list of variables to exclude from processing."""
+        self.excluded_vars = excluded_vars if excluded_vars is not None else []
+        print(f"INFO: Updated excluded variables in DataModule: {self.excluded_vars}")
 
     def setup(self, stage=None):
         """
@@ -571,8 +582,21 @@ class WildfireDataModule(LightningDataModule):
             if self.dataset_test is None:
                  print("INFO: Setting up Test dataset for prediction...")
                  # (Repeat test dataset setup logic if needed, or load a specific predict set)
-                 base_test_dataset = WildfireDataset(...)
-                 self.dataset_test = WildfireForecast(...)
+                 base_test_dataset = WildfireDataset(
+                    file_paths=test_files,
+                    variables=self.hparams.variables,
+                    patch_size=self.hparams.patch_size,
+                    missing_regions_path=self.hparams.missing_regions_path,
+                    polygon_coords_path=self.hparams.polygon_coords_path,
+                    transform=self.transforms,
+                    partition='test'
+                 )
+                 self.dataset_test = WildfireForecast(
+                    dataset=base_test_dataset,
+                    max_predict_range=self.hparams.prediction_range,
+                    min_predict_range=self.hparams.min_prediction_range,
+                    random_lead_time=False
+                 )
                  print(f"INFO: Prediction dataset (using test set) pairs: {len(self.dataset_test)}")
 
 
@@ -832,7 +856,7 @@ class WildfireDataModule(LightningDataModule):
             self.dataset_train,
             batch_size=self.hparams.batch_size,
             shuffle=True, # Shuffle training data
-            num_workers=os.cpu_count()//self.hparams.num_workers,
+            num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
             collate_fn=collate_fn, # Assumes collate_fn is defined globally or imported
             persistent_workers=True if self.hparams.num_workers > 0 else False, # Can speed up epoch starts
@@ -852,7 +876,7 @@ class WildfireDataModule(LightningDataModule):
             self.dataset_val,
             batch_size=self.hparams.batch_size,
             shuffle=False, # No shuffling for validation
-            num_workers=os.cpu_count()//self.hparams.num_workers,
+            num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
             collate_fn=collate_fn,
             persistent_workers=True if self.hparams.num_workers > 0 else False,
@@ -872,7 +896,7 @@ class WildfireDataModule(LightningDataModule):
             self.dataset_test,
             batch_size=self.hparams.batch_size,
             shuffle=False, # No shuffling for test
-            num_workers=os.cpu_count()//self.hparams.num_workers,
+            num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
             collate_fn=collate_fn,
             persistent_workers=True if self.hparams.num_workers > 0 else False,
@@ -893,7 +917,7 @@ class WildfireDataModule(LightningDataModule):
             self.dataset_test, # Or self.dataset_predict if you add it
             batch_size=self.hparams.batch_size,
             shuffle=False,
-            num_workers=os.cpu_count()//self.hparams.num_workers,
+            num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
             collate_fn=collate_fn,
             persistent_workers=True if self.hparams.num_workers > 0 else False,

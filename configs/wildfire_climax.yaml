@@ -61,7 +61,7 @@ trainer:
 
 # ---------------------------- MODEL -------------------------------------------
 model:
-    lr: 1e-4
+    lr: 1e-8
     beta_1: 0.9
     beta_2: 0.95
     weight_decay: 1e-5
@@ -70,7 +70,18 @@ model:
     warmup_start_factor: 1
     eta_min: 1e-8
     pretrained_path: ""
-    prediction_range: 7
+    prediction_range: 1
+    # New parameter for excluded variables
+    excluded_vars: [
+      "specific humidity",
+      "wind direction",
+      "wind speed",
+      "elevation",
+      "M11",
+      "I2",
+      "I1",
+      "pdsi"
+    ]
 
     # Network architecture passed to the model's init
     net:
@@ -99,7 +110,7 @@ data:
   # Parameters below are passed directly as **kwargs to WildfireDataModule.__init__
   # This structure assumes 'datamodule_class=WildfireDataModule' is passed to LightningCLI constructor.
 
-  root_dir: /vast/palmer/scratch/wong/dhw33/wildfirets # Root directory containing year folders
+  root_dir: /media/staging1/dhwang/wildfire_ts # Root directory containing year folders
   variables: [
     # Must match the order expected by the pre-calculated means/stds and the model's default_vars
     "M11", "I2", "I1", "NDVI_last", "EVI2_last", "total precipitation",
@@ -115,9 +126,9 @@ data:
   stds: [0.14282, 0.247183, 0.279785, 0.2949, 0.184372, 6.186752, 2.224253, 0.645165, 113.057312, 118.311935, 23.38246, 0.004709, 4.827886, 0.642565, 8102.003906, 2.537376, 1.0, 68.801041, 1.645445, 0.67189, 10.676199, 0.004733]
 
   # Forecast parameters
-  prediction_range: 7     # Max days ahead for target data
+  prediction_range: 1     # Max days ahead for target data
   min_prediction_range: 1 # Min days ahead for target data
-  random_lead_time: True  # Sample lead time randomly in [min, max] range during training
+  random_lead_time: False  # Sample lead time randomly in [min, max] range during training
 
   # Paths (set to null to let DataModule try finding them in root_dir)
   missing_regions_path: null
@@ -135,3 +146,15 @@ data:
   batch_size: 24
   num_workers: 1
   pin_memory: true
+  
+  # New parameter for excluded variables (must match model.excluded_vars)
+  excluded_vars: [
+    "specific humidity",
+    "wind direction", 
+    "wind speed",
+    "elevation",
+    "M11",
+    "I2",
+    "I1",
+    "pdsi"
+  ]

@@ -29,6 +29,16 @@ def main():
     cli.model.set_val_clim(cli.datamodule.get_climatology("val"))
     cli.model.set_test_clim(cli.datamodule.get_climatology("test"))
     
+    # Pass excluded variables from datamodule to model if they exist in both
+    if hasattr(cli.datamodule, 'excluded_vars') and cli.datamodule.excluded_vars:
+        cli.model.set_excluded_vars(cli.datamodule.excluded_vars)
+        print(f"INFO: Passing excluded variables from DataModule to Model: {cli.datamodule.excluded_vars}")
+    
+    # Important: Perform any pre-training setup for variable exclusion
+    # This ensures filtering is done before training starts, not during runtime
+    if hasattr(cli.model, 'prepare_excluded_variables'):
+        cli.model.prepare_excluded_variables()
+        
     # Train the model
     cli.trainer.fit(cli.model, datamodule=cli.datamodule)
     

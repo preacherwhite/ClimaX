@@ -1,0 +1,269 @@
+# pytorch_lightning==1.8.0
+seed_everything: 42
+trainer:
+  logger:
+    class_path: pytorch_lightning.loggers.TensorBoardLogger
+    init_args:
+      save_dir: ./wildfire_outputs/logs
+      name: wildfire_climax
+      version: null
+      log_graph: false
+      default_hp_metric: true
+      prefix: ''
+      sub_dir: null
+      comment: ''
+      purge_step: null
+      max_queue: 10
+      flush_secs: 120
+      filename_suffix: ''
+  enable_checkpointing: true
+  callbacks:
+  - class_path: pytorch_lightning.callbacks.LearningRateMonitor
+    init_args:
+      logging_interval: step
+      log_momentum: false
+  - class_path: pytorch_lightning.callbacks.ModelCheckpoint
+    init_args:
+      dirpath: ./wildfire_outputs/checkpoints
+      filename: step_{step:06d}-val_rmse_{val/rmse:.4f}
+      monitor: val/rmse
+      verbose: false
+      save_last: true
+      save_top_k: 1
+      save_weights_only: false
+      mode: min
+      auto_insert_metric_name: false
+      every_n_train_steps: null
+      train_time_interval: null
+      every_n_epochs: null
+      save_on_train_epoch_end: null
+  - class_path: pytorch_lightning.callbacks.EarlyStopping
+    init_args:
+      monitor: val/rmse
+      min_delta: 0.001
+      patience: 10
+      verbose: false
+      mode: min
+      strict: true
+      check_finite: true
+      stopping_threshold: null
+      divergence_threshold: null
+      check_on_train_epoch_end: null
+      log_rank_zero_only: false
+  - class_path: pytorch_lightning.callbacks.RichProgressBar
+    init_args:
+      refresh_rate: 1
+      leave: false
+      theme:
+        description: white
+        progress_bar: '#6206E0'
+        progress_bar_finished: '#6206E0'
+        progress_bar_pulse: '#6206E0'
+        batch_progress: white
+        time: grey54
+        processing_speed: grey70
+        metrics: white
+      console_kwargs: null
+  default_root_dir: ./wildfire_outputs
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: null
+  num_nodes: 1
+  num_processes: null
+  devices: 1
+  gpus: null
+  auto_select_gpus: false
+  tpu_cores: null
+  ipus: null
+  enable_progress_bar: true
+  overfit_batches: 0.0
+  track_grad_norm: -1
+  check_val_every_n_epoch: 1
+  fast_dev_run: false
+  accumulate_grad_batches: null
+  max_epochs: 10
+  min_epochs: null
+  max_steps: -1
+  min_steps: null
+  max_time: null
+  limit_train_batches: null
+  limit_val_batches: null
+  limit_test_batches: null
+  limit_predict_batches: null
+  val_check_interval: null
+  log_every_n_steps: 10
+  accelerator: gpu
+  strategy:
+    class_path: pytorch_lightning.strategies.DDPStrategy
+    init_args:
+      parallel_devices: null
+      cluster_environment: null
+      checkpoint_io: null
+      precision_plugin: null
+      ddp_comm_state: null
+      ddp_comm_hook: null
+      ddp_comm_wrapper: null
+      model_averaging_period: null
+      process_group_backend: null
+      timeout: 0:30:00
+      output_device: null
+      dim: 0
+      broadcast_buffers: true
+      process_group: null
+      bucket_cap_mb: 25.0
+      find_unused_parameters: false
+      check_reduction: false
+      gradient_as_bucket_view: false
+      static_graph: true
+  sync_batchnorm: true
+  precision: 16
+  enable_model_summary: true
+  num_sanity_val_steps: 2
+  resume_from_checkpoint: null
+  profiler: null
+  benchmark: null
+  deterministic: null
+  reload_dataloaders_every_n_epochs: 0
+  auto_lr_find: false
+  replace_sampler_ddp: true
+  detect_anomaly: false
+  auto_scale_batch_size: false
+  plugins: null
+  amp_backend: native
+  amp_level: null
+  move_metrics_to_cpu: false
+  multiple_trainloader_mode: max_size_cycle
+  inference_mode: true
+model:
+  net:
+    class_path: climax.arch.ClimaX
+    init_args:
+      default_vars:
+      - M11
+      - I2
+      - I1
+      - NDVI_last
+      - EVI2_last
+      - total precipitation
+      - wind speed
+      - wind direction
+      - minimum temperature
+      - maximum temperature
+      - energy release component
+      - specific humidity
+      - slope
+      - aspect
+      - elevation
+      - pdsi
+      - LC_Type1
+      - forecast total precipitation
+      - forecast wind speed
+      - forecast wind direction
+      - forecast temperature
+      - forecast specific humidity
+      img_size:
+      - 256
+      - 256
+      patch_size: 16
+      embed_dim: 768
+      depth: 12
+      decoder_depth: 2
+      num_heads: 12
+      mlp_ratio: 4
+      drop_path: 0.1
+      drop_rate: 0.1
+      parallel_patch_embed: false
+  pretrained_path: ''
+  lr: 1.0e-05
+  beta_1: 0.9
+  beta_2: 0.95
+  weight_decay: 1.0e-05
+  warmup_epochs: 0
+  max_epochs: 10
+  warmup_start_factor: 1.0
+  eta_min: 1.0e-08
+  prediction_range: 1
+data:
+  root_dir: /media/staging1/dhwang/wildfire_ts
+  variables:
+  - M11
+  - I2
+  - I1
+  - NDVI_last
+  - EVI2_last
+  - total precipitation
+  - wind speed
+  - wind direction
+  - minimum temperature
+  - maximum temperature
+  - energy release component
+  - specific humidity
+  - slope
+  - aspect
+  - elevation
+  - pdsi
+  - LC_Type1
+  - forecast total precipitation
+  - forecast wind speed
+  - forecast wind direction
+  - forecast temperature
+  - forecast specific humidity
+  means:
+  - 0.21029
+  - 0.373954
+  - 0.294503
+  - 0.344969
+  - 0.199557
+  - 1.928774
+  - 3.174273
+  - -0.100475
+  - 219.185318
+  - 229.286575
+  - 25.870285
+  - 0.005086
+  - 2.724119
+  - 0.02126
+  - -1572.413208
+  - 0.98446
+  - 0.0
+  - 41.989445
+  - 2.245609
+  - 0.046645
+  - 13.531087
+  - 0.007725
+  stds:
+  - 0.14282
+  - 0.247183
+  - 0.279785
+  - 0.2949
+  - 0.184372
+  - 6.186752
+  - 2.224253
+  - 0.645165
+  - 113.057312
+  - 118.311935
+  - 23.38246
+  - 0.004709
+  - 4.827886
+  - 0.642565
+  - 8102.003906
+  - 2.537376
+  - 1.0
+  - 68.801041
+  - 1.645445
+  - 0.67189
+  - 10.676199
+  - 0.004733
+  missing_regions_path: null
+  polygon_coords_path: null
+  patch_size:
+  - 256
+  - 256
+  prediction_range: 1
+  min_prediction_range: 1
+  random_lead_time: false
+  val_ratio: 0.1
+  test_ratio: 0.1
+  random_seed: 42
+  batch_size: 24
+  num_workers: 1
+  pin_memory: true
