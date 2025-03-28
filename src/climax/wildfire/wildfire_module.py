@@ -148,66 +148,42 @@ class WildfireModule(LightningModule):
     def prepare_excluded_variables(self):
         """
         Prepare model for variable exclusion before training starts.
-        This modifies the model's architecture or preprocessing steps
-        to completely ignore the excluded variables.
+        
+        This method does NOT modify the model architecture directly, as that would 
+        require deep knowledge of the specific ClimaX implementation and potentially
+        break compatibility. Instead, it prepares tracking information for proper
+        runtime filtering.
         """
         if not self.excluded_vars or len(self.excluded_vars) == 0:
             print("INFO: No variables to exclude, model will use all variables.")
             return
             
-        print(f"INFO: Preparing model to permanently exclude variables: {self.excluded_vars}")
+        print(f"INFO: Preparing to exclude variables during processing: {self.excluded_vars}")
         
-        # Get all variable names from the model
-        all_vars = self.net.default_vars
-        if not all_vars:
-            print("WARNING: Could not find default variables list in the model. Variable exclusion may not work correctly.")
-            return
-            
-        # Create indices of variables to keep
-        keep_indices = [i for i, var in enumerate(all_vars) if var not in self.excluded_vars]
-        keep_vars = [var for var in all_vars if var not in self.excluded_vars]
+        # Instead of modifying architecture, we'll set up tracking for runtime filtering
+        self._should_filter = True
         
-        if len(keep_indices) == 0:
-            print("WARNING: All variables would be excluded. Keeping original configuration.")
-            return
+        # Generate variable map for quick lookups during runtime
+        if hasattr(self.net, 'default_vars'):
+            self._var_indices = {var: idx for idx, var in enumerate(self.net.default_vars)}
+            self._excluded_indices = [self._var_indices[var] for var in self.excluded_vars 
+                                     if var in self._var_indices]
             
-        # Modify the model's input layer to accept only the kept variables
-        # This will depend on the exact architecture of the ClimaX model
-        try:
-            # Update the model's variable list
-            self.net.default_vars = keep_vars
-            print(f"INFO: Updated model's default_vars list to exclude {len(self.excluded_vars)} variables")
-            
-            # Update the model's input projection if applicable
-            # Example (this would need to be adapted to your specific ClimaX implementation):
-            if hasattr(self.net, 'input_projection'):
-                old_weight = self.net.input_projection.weight
-                old_bias = self.net.input_projection.bias
+            if len(self._excluded_indices) != len(self.excluded_vars):
+                print(f"WARNING: Some excluded variables not found in model's variables. "
+                      f"Found {len(self._excluded_indices)} of {len(self.excluded_vars)}.")
                 
-                # Create a new weight matrix with only the kept channels
-                new_weight = old_weight[:, keep_indices, :, :]
-                
-                # Adjust input projection layer
-                in_channels = len(keep_vars)
-                out_channels = old_weight.size(0)
-                kernel_size = old_weight.size(2)
-                new_projection = torch.nn.Conv2d(in_channels, out_channels, kernel_size, bias=True)
-                
-                # Copy the kept weights and biases
-                new_projection.weight.data = new_weight
-                new_projection.bias.data = old_bias
-                
-                # Replace the old projection with the new one
-                self.net.input_projection = new_projection
-                print(f"INFO: Updated input projection layer to accept {in_channels} input channels")
+            print(f"INFO: Prepared to exclude indices: {self._excluded_indices}")
             
-            # If there are other components that need adjustment, modify them here
-            
-            print("INFO: Model successfully prepared for variable exclusion")
-            
-        except Exception as e:
-            print(f"ERROR: Failed to modify model for variable exclusion: {e}")
-            print("WARNING: Falling back to runtime filtering")
+            # Store original variable count for verification
+            self._original_var_count = len(self.net.default_vars)
+        else:
+            print("WARNING: Model does not have default_vars attribute. Variable exclusion will rely on runtime names.")
+            self._var_indices = {}
+            self._excluded_indices = []
+            self._original_var_count = 0
+        
+        print("INFO: Variable exclusion will be applied during runtime processing")
 
 
     def set_val_clim(self, clim):
@@ -224,80 +200,104 @@ class WildfireModule(LightningModule):
         print(f"INFO: Test climatology stored (shape: {self.test_clim.shape if self.test_clim is not None else 'None'}).")
 
 
-    def _filter_excluded_variables(self, x, variables):
+    def _filter_excluded_variables(self, x, y, variables, out_variables):
         """
-        Filter out excluded variables from input tensor and variable names.
-        
-        This method should only be used as a fallback if permanent architecture
-        modification through prepare_excluded_variables() failed.
+        Remove excluded variable channels from both input and target tensors.
         
         Args:
             x (torch.Tensor): Input tensor with shape (B, C, H, W)
+            y (torch.Tensor): Target tensor with shape (B, C, H, W)
             variables (list): List of variable names corresponding to channels
+            out_variables (list): List of output variable names
             
         Returns:
-            tuple: (filtered_tensor, filtered_variables)
+            tuple: (filtered_x, filtered_y, filtered_variables, filtered_out_variables)
         """
         if not self.excluded_vars or len(self.excluded_vars) == 0:
-            return x, variables
+            return x, y, variables, out_variables
             
-        # Create a mask for channels to keep
-        keep_mask = [var not in self.excluded_vars for var in variables]
+        # Create masks for variables to keep
+        keep_indices = []
+        filtered_variables = []
         
-        # Get indices of channels to keep
-        keep_indices = [i for i, keep in enumerate(keep_mask) if keep]
+        for i, var in enumerate(variables):
+            if var not in self.excluded_vars:
+                keep_indices.append(i)
+                filtered_variables.append(var)
         
+        # If all variables would be excluded, keep original
         if len(keep_indices) == 0:
-            print("WARNING: All variables would be excluded. Keeping original input.")
-            return x, variables
+            print("WARNING: All variables would be excluded. Keeping original tensors.")
+            return x, y, variables, out_variables
             
-        # Filter the input tensor by selecting channels to keep
+        # Select only the non-excluded channels
         filtered_x = x[:, keep_indices]
+        filtered_y = y[:, keep_indices]
         
-        # Filter the variable names
-        filtered_variables = [var for var, keep in zip(variables, keep_mask) if keep]
+        # Also filter output variables to match
+        filtered_out_variables = [var for var in out_variables if var not in self.excluded_vars]
+        if len(filtered_out_variables) == 0 and out_variables:
+            # If all output variables would be excluded, keep all that remain in filtered_variables
+            filtered_out_variables = filtered_variables
         
-        # Only log this message on the first batch to avoid console spam
+        # Only log this message once to avoid console spam
         if not hasattr(self, '_filter_logged'):
-            print(f"INFO: Filtered {len(variables) - len(filtered_variables)} variables. Kept {len(filtered_variables)} variables.")
+            excluded_count = len(variables) - len(filtered_variables)
+            print(f"INFO: Removed {excluded_count} excluded variable channels. Kept {len(filtered_variables)} variables.")
             self._filter_logged = True
             
-        return filtered_x, filtered_variables
+        return filtered_x, filtered_y, filtered_variables, filtered_out_variables
 
 
     def forward(self, x, y, lead_times, variables, out_variables):
         """Direct forward pass through the network with variable filtering."""
-        # Filter excluded variables before forward pass
-        x_filtered, variables_filtered = self._filter_excluded_variables(x, variables)
+        # Remove excluded variable channels from both input and target
+        x_filtered, y_filtered, variables_filtered, out_variables_filtered = self._filter_excluded_variables(
+            x, y, variables, out_variables
+        )
         
-        # Wraps the core network's forward pass
-        # Assuming the first element of the return tuple is the loss dict
-        loss_dict, predictions = self.net.forward(x_filtered, y, lead_times, variables_filtered, out_variables, [mse], lat=self.lat.to(x.device) if self.lat is not None else None)
-        return loss_dict[0], predictions
+        # Forward pass with filtered inputs, targets, and variable lists
+        loss_dict, predictions = self.net.forward(
+            x_filtered, y_filtered, lead_times, variables_filtered, out_variables_filtered, 
+            [mse], lat=self.lat.to(x.device) if self.lat is not None else None
+        )
+        
+        # Handle case where loss_dict might be a list
+        if isinstance(loss_dict, list):
+            loss_dict = loss_dict[0]
+            
+        return loss_dict, predictions
 
 
     def training_step(self, batch, batch_idx):
         """Performs a single training step with variable filtering."""
         x, y, lead_times, variables, out_variables = batch
         
-        # Filter excluded variables
-        x_filtered, variables_filtered = self._filter_excluded_variables(x, variables)
+        # Remove excluded variable channels from both input and target
+        x_filtered, y_filtered, variables_filtered, out_variables_filtered = self._filter_excluded_variables(
+            x, y, variables, out_variables
+        )
         
         lat = self.lat.to(x.device) if self.lat is not None else None
 
-        # Assuming net.forward returns [loss_dict], predictions
-        loss_dict, _ = self.net.forward(x_filtered, y, lead_times, variables_filtered, out_variables, [mse], lat=lat)
-        if isinstance(loss_dict, list): loss_dict = loss_dict[0] # Ensure it's a dict
+        # Forward pass with filtered tensors and variable lists
+        loss_dict, _ = self.net.forward(
+            x_filtered, y_filtered, lead_times, variables_filtered, out_variables_filtered, 
+            [mse], lat=lat
+        )
+        
+        if isinstance(loss_dict, list): 
+            loss_dict = loss_dict[0] # Ensure it's a dict
 
         # Log training loss components
         for var, value in loss_dict.items():
             self.log(
                 f"train/{var}",
                 value,
-                on_step=True,   # Log instantaneous step value
-                on_epoch=True,  # Log average epoch value
-                prog_bar=(var == "loss"), # Show main loss in progress bar
-                sync_dist=True  # Aggregate correctly across devices
+                on_step=True,
+                on_epoch=True,
+                prog_bar=(var == "loss"),
+                sync_dist=True
             )
 
         # Return the main loss for optimization
@@ -311,10 +311,12 @@ class WildfireModule(LightningModule):
         """Performs a single validation step with variable filtering."""
         x, y, lead_times, variables, out_variables = batch
         
-        # Filter excluded variables
-        x_filtered, variables_filtered = self._filter_excluded_variables(x, variables)
+        # Remove excluded variable channels from both input and target
+        x_filtered, y_filtered, variables_filtered, out_variables_filtered = self._filter_excluded_variables(
+            x, y, variables, out_variables
+        )
         
-        # Use mean lead time or hparam for consistent logging tag? Using hparam.
+        # Use mean lead time or hparam for consistent logging tag
         log_postfix = f"_day_{int(self.hparams.prediction_range)}"
 
         metrics_to_compute = [mse_val, rmse_val] # Define metrics for evaluation
@@ -322,11 +324,17 @@ class WildfireModule(LightningModule):
         # Ensure auxiliary data is on the correct device
         lat = self.lat.to(x.device) if self.lat is not None else None
         val_clim = self.val_clim.to(x.device) if self.val_clim is not None else None
+        
+        # If we have a climatology tensor, filter it to match our filtered variables
+        if val_clim is not None and len(val_clim) == len(variables):
+            keep_indices = [i for i, var in enumerate(variables) if var not in self.excluded_vars]
+            if keep_indices:
+                val_clim = val_clim[keep_indices]
 
-        # Assuming net.evaluate returns a list of dictionaries (one per metric)
+        # Forward pass with filtered tensors and variable lists
         all_loss_dicts = self.net.evaluate(
-            x_filtered, y, lead_times, variables_filtered, out_variables,
-            transform=None, # Assuming data is pre-normalized
+            x_filtered, y_filtered, lead_times, variables_filtered, out_variables_filtered,
+            transform=None,
             metrics=metrics_to_compute,
             lat=lat,
             clim=val_clim,
@@ -341,15 +349,15 @@ class WildfireModule(LightningModule):
         # Log validation metrics (epoch level)
         for var, value in combined_loss_dict.items():
             self.log(
-                f"val/{var}", # Metric names should come from evaluate()
+                f"val/{var}",
                 value,
                 on_step=False,
                 on_epoch=True,
-                prog_bar=(f"rmse{log_postfix}" in var), # Show RMSE in progress bar
-                sync_dist=True # Important for DDP validation
+                prog_bar=(f"rmse{log_postfix}" in var),
+                sync_dist=True
             )
 
-        # Return the dictionary for potential use in callbacks (e.g., ModelCheckpoint)
+        # Return the dictionary for potential use in callbacks
         return combined_loss_dict
 
 
@@ -357,8 +365,10 @@ class WildfireModule(LightningModule):
         """Performs a single test step with variable filtering."""
         x, y, lead_times, variables, out_variables = batch
         
-        # Filter excluded variables
-        x_filtered, variables_filtered = self._filter_excluded_variables(x, variables)
+        # Remove excluded variable channels from both input and target
+        x_filtered, y_filtered, variables_filtered, out_variables_filtered = self._filter_excluded_variables(
+            x, y, variables, out_variables
+        )
         
         log_postfix = f"_day_{int(self.hparams.prediction_range)}"
         metrics_to_compute = [mse_val, rmse_val]
@@ -366,9 +376,16 @@ class WildfireModule(LightningModule):
         # Ensure auxiliary data is on the correct device
         lat = self.lat.to(x.device) if self.lat is not None else None
         test_clim = self.test_clim.to(x.device) if self.test_clim is not None else None
+        
+        # If we have a climatology tensor, filter it to match our filtered variables
+        if test_clim is not None and len(test_clim) == len(variables):
+            keep_indices = [i for i, var in enumerate(variables) if var not in self.excluded_vars]
+            if keep_indices:
+                test_clim = test_clim[keep_indices]
 
+        # Forward pass with filtered tensors and variable lists
         all_loss_dicts = self.net.evaluate(
-            x_filtered, y, lead_times, variables_filtered, out_variables,
+            x_filtered, y_filtered, lead_times, variables_filtered, out_variables_filtered,
             transform=None,
             metrics=metrics_to_compute,
             lat=lat,
@@ -387,8 +404,9 @@ class WildfireModule(LightningModule):
                 value,
                 on_step=False,
                 on_epoch=True,
-                sync_dist=True # Important for DDP test aggregation
+                sync_dist=True
             )
+                
         return combined_loss_dict
 
 
