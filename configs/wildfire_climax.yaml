@@ -95,12 +95,12 @@ model:
           "forecast wind speed", "forecast wind direction", "forecast temperature",
           "forecast specific humidity"
         ]
-        img_size: [256, 256]
-        patch_size: 16
+        img_size: [128, 128]
+        patch_size: 8
         embed_dim: 768
-        depth: 12
+        depth: 8
         decoder_depth: 2
-        num_heads: 12
+        num_heads: 8
         mlp_ratio: 4
         drop_path: 0.1
         drop_rate: 0.1
@@ -135,7 +135,7 @@ data:
   polygon_coords_path: null
 
   # Data processing parameters
-  patch_size: [256, 256] # Target height/width for each data patch
+  patch_size: [128, 128] # Target height/width for each data patch
 
   # Data split parameters
   val_ratio: 0.1

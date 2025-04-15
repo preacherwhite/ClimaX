@@ -19,7 +19,7 @@ class WildfireDataset(Dataset):
         root_dir=None,
         years=None,
         variables=None,
-        patch_size=(256, 256),
+        patch_size=(128, 128),
         missing_regions_path=None,
         polygon_coords_path=None,
         transform=None,
@@ -109,6 +109,9 @@ class WildfireDataset(Dataset):
         Pad or crop data to target size. If resize=True, uses OpenCV (cv2)
         for potentially faster CPU resizing, falling back to PyTorch's interpolate
         if cv2 fails, and finally to pad/crop if resizing is disabled or fails.
+        
+        For cropping, performs a random crop from the full-sized image if the image
+        is larger than the target size.
 
         Args:
             data (np.ndarray): Input data array with shape (H, W, C).
@@ -141,8 +144,8 @@ class WildfireDataset(Dataset):
                 return resized_data
 
             except ImportError:
-                 print("WARNING: cv2 not found. Falling back to PyTorch interpolate for resizing.")
-                 resize = False # Disable resize for subsequent fallback logic
+                print("WARNING: cv2 not found. Falling back to PyTorch interpolate for resizing.")
+                resize = False # Disable resize for subsequent fallback logic
             except Exception as e:
                 print(f"WARNING: cv2.resize failed ({e}), falling back to PyTorch interpolate.")
                 # --- PyTorch Fallback ---
@@ -165,23 +168,36 @@ class WildfireDataset(Dataset):
                     # Convert back to numpy and original dtype
                     resized_data_torch = resized_tensor.permute(1, 2, 0).numpy()
                     if resized_data_torch.dtype != data.dtype:
-                         resized_data_torch = resized_data_torch.astype(data.dtype)
+                        resized_data_torch = resized_data_torch.astype(data.dtype)
 
                     # print(f"Debug: Resized {h}x{w} -> {resized_data_torch.shape[0]}x{resized_data_torch.shape[1]} using PyTorch fallback")
                     return resized_data_torch
 
                 except Exception as e_torch:
-                     print(f"ERROR: PyTorch fallback resize also failed ({e_torch}). Reverting to pad/crop.")
-                     resize = False # Disable resize, proceed to pad/crop logic below
+                    print(f"ERROR: PyTorch fallback resize also failed ({e_torch}). Reverting to pad/crop logic.")
+                    resize = False # Disable resize, proceed to pad/crop logic below
 
-        # --- Pad/Crop Logic (if resize=False or resize attempts failed) ---
+        # --- Random Crop Logic (if resize=False or resize attempts failed) ---
         # Crop first if larger than target
-        if h > th:
-            data = data[:th, :, :]
-            h = th # Update height
-        if w > tw:
-            data = data[:, :tw, :]
-            w = tw # Update width
+        if h > th or w > tw:
+            # Random crop if image is larger than target in either dimension
+            if h > th:
+                # Calculate top bound for the random crop
+                top = np.random.randint(0, h - th + 1)
+            else:
+                # If height is already smaller or equal, don't crop vertically
+                top = 0
+                
+            if w > tw:
+                # Calculate left bound for the random crop
+                left = np.random.randint(0, w - tw + 1)
+            else:
+                # If width is already smaller or equal, don't crop horizontally
+                left = 0
+                
+            # Perform the random crop
+            data = data[top:top+th, left:left+tw, :]
+            h, w = data.shape[:2]  # Update height and width after cropping
 
         # Pad if smaller than target
         pad_h = th - h
@@ -196,13 +212,13 @@ class WildfireDataset(Dataset):
                 # print(f"Debug: Padded {h}x{w} -> {padded_data.shape[0]}x{padded_data.shape[1]}")
                 return padded_data
             except Exception as e_pad:
-                 print(f"ERROR: np.pad failed ({e_pad}). Returning original cropped data.")
-                 # Fallback if even padding fails (unlikely)
-                 return data
+                print(f"ERROR: np.pad failed ({e_pad}). Returning original cropped data.")
+                # Fallback if even padding fails (unlikely)
+                return data
         else:
-             # print(f"Debug: Data already target size {h}x{w}. No pad/crop needed.")
-             return data # Return data if it was already the correct size after potential cropping
-    
+            # print(f"Debug: Data already target size {h}x{w}. No pad/crop needed.")
+            return data # Return data if it was already the correct size after potential cropping
+        
     
     
     def __len__(self):
@@ -856,7 +872,7 @@ class WildfireDataModule(LightningDataModule):
             self.dataset_train,
             batch_size=self.hparams.batch_size,
             shuffle=True, # Shuffle training data
-            num_workers=self.hparams.num_workers,
+            num_workers=os.cpu_count()//self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
             collate_fn=collate_fn, # Assumes collate_fn is defined globally or imported
             persistent_workers=True if self.hparams.num_workers > 0 else False, # Can speed up epoch starts
@@ -876,7 +892,7 @@ class WildfireDataModule(LightningDataModule):
             self.dataset_val,
             batch_size=self.hparams.batch_size,
             shuffle=False, # No shuffling for validation
-            num_workers=self.hparams.num_workers,
+            num_workers=os.cpu_count()//self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
             collate_fn=collate_fn,
             persistent_workers=True if self.hparams.num_workers > 0 else False,
@@ -896,7 +912,7 @@ class WildfireDataModule(LightningDataModule):
             self.dataset_test,
             batch_size=self.hparams.batch_size,
             shuffle=False, # No shuffling for test
-            num_workers=self.hparams.num_workers,
+            num_workers=os.cpu_count()//self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
             collate_fn=collate_fn,
             persistent_workers=True if self.hparams.num_workers > 0 else False,
@@ -917,7 +933,7 @@ class WildfireDataModule(LightningDataModule):
             self.dataset_test, # Or self.dataset_predict if you add it
             batch_size=self.hparams.batch_size,
             shuffle=False,
-            num_workers=self.hparams.num_workers,
+            num_workers=os.cpu_count()//self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
             collate_fn=collate_fn,
             persistent_workers=True if self.hparams.num_workers > 0 else False,
