@@ -22,9 +22,9 @@ class WildfireModule(LightningModule):
         beta_1: float = 0.9,
         beta_2: float = 0.95,
         weight_decay: float = 1e-5,
-        # --- Epoch-Based Scheduler Parameters ---
-        warmup_epochs: int = 5,
-        max_epochs: int = 100,
+        # --- Step-Based Scheduler Parameters ---
+        warmup_steps: int = 1000,
+        max_steps: int = 100000,
         warmup_start_factor: float = 0.01, # Start LR = lr * factor
         eta_min: float = 1e-8,          # Min LR for cosine decay phase
         # --- End Scheduler Parameters ---
@@ -39,8 +39,8 @@ class WildfireModule(LightningModule):
             beta_1 (float, optional): AdamW beta1. Defaults to 0.9.
             beta_2 (float, optional): AdamW beta2. Defaults to 0.95.
             weight_decay (float, optional): AdamW weight decay. Defaults to 1e-5.
-            warmup_epochs (int, optional): Number of epochs for linear warmup. Defaults to 5.
-            max_epochs (int, optional): Total number of training epochs (must match trainer). Defaults to 100.
+            warmup_steps (int, optional): Number of steps for linear warmup. Defaults to 1000.
+            max_steps (int, optional): Total number of training steps (must match trainer). Defaults to 100000.
             warmup_start_factor (float, optional): Factor to multiply initial LR by at start of warmup. Defaults to 0.01.
             eta_min (float, optional): Minimum learning rate during cosine decay. Defaults to 1e-8.
             prediction_range (int, optional): Max prediction range (can be overridden by set_pred_range). Defaults to 7.
@@ -255,7 +255,7 @@ class WildfireModule(LightningModule):
         x_filtered, y_filtered, variables_filtered, out_variables_filtered = self._filter_excluded_variables(
             x, y, variables, out_variables
         )
-        
+
         # Forward pass with filtered inputs, targets, and variable lists
         loss_dict, predictions = self.net.forward(
             x_filtered, y_filtered, lead_times, variables_filtered, out_variables_filtered, 
@@ -309,13 +309,15 @@ class WildfireModule(LightningModule):
 
     def validation_step(self, batch, batch_idx):
         """Performs a single validation step with variable filtering."""
+        # Skip validation when no validation data is available
+        if batch is None:
+            return None
+            
         x, y, lead_times, variables, out_variables = batch
-        
         # Remove excluded variable channels from both input and target
         x_filtered, y_filtered, variables_filtered, out_variables_filtered = self._filter_excluded_variables(
             x, y, variables, out_variables
         )
-        
         # Use mean lead time or hparam for consistent logging tag
         log_postfix = f"_day_{int(self.hparams.prediction_range)}"
 
@@ -363,6 +365,10 @@ class WildfireModule(LightningModule):
 
     def test_step(self, batch, batch_idx):
         """Performs a single test step with variable filtering."""
+        # Skip testing when no test data is available
+        if batch is None:
+            return None
+            
         x, y, lead_times, variables, out_variables = batch
         
         # Remove excluded variable channels from both input and target
@@ -411,7 +417,7 @@ class WildfireModule(LightningModule):
 
 
     def configure_optimizers(self):
-        """Configure optimizer (AdamW) and epoch-based LR scheduler (SequentialLR)."""
+        """Configure optimizer (AdamW) and step-based LR scheduler (SequentialLR)."""
         # --- Optimizer setup (AdamW with parameter groups) ---
         decay = []
         no_decay = []
@@ -452,43 +458,44 @@ class WildfireModule(LightningModule):
         # --- End Optimizer setup ---
 
 
-        # --- Configure Epoch-Based Scheduler (Warmup + Cosine Decay) ---
-        print(f"INFO: Setting up epoch-based scheduler: Linear Warmup ({self.hparams.warmup_epochs} epochs, start_factor={self.hparams.warmup_start_factor}) -> Cosine Decay ({self.hparams.max_epochs - self.hparams.warmup_epochs} epochs, eta_min={self.hparams.eta_min})")
+        # --- Configure Step-Based Scheduler (Warmup + Cosine Decay) ---
+        print(f"INFO: Setting up step-based scheduler: Linear Warmup ({self.hparams.warmup_steps} steps, start_factor={self.hparams.warmup_start_factor}) -> "
+              f"Cosine Decay ({self.hparams.max_steps - self.hparams.warmup_steps} steps, eta_min={self.hparams.eta_min})")
 
         # 1. Warmup Scheduler (LinearLR)
-        # Runs for warmup_epochs epochs, scaling LR from start_factor*lr to 1.0*lr
+        # Runs for warmup_steps steps, scaling LR from start_factor*lr to 1.0*lr
         warmup_scheduler = LinearLR(
             optimizer,
             start_factor=self.hparams.warmup_start_factor,
             end_factor=1.0,
-            total_iters=self.hparams.warmup_epochs # number of *epochs* for warmup
+            total_iters=self.hparams.warmup_steps # number of *steps* for warmup
         )
 
         # 2. Cosine Decay Scheduler (CosineAnnealingLR)
-        # Calculate the number of epochs remaining for cosine decay
-        cosine_epochs = max(1, self.hparams.max_epochs - self.hparams.warmup_epochs) # T_max must be > 0
+        # Calculate the number of steps remaining for cosine decay
+        cosine_steps = max(1, self.hparams.max_steps - self.hparams.warmup_steps) # T_max must be > 0
 
         cosine_scheduler = CosineAnnealingLR(
             optimizer,
-            T_max=cosine_epochs, # number of *epochs* for decay
+            T_max=cosine_steps, # number of *steps* for decay
             eta_min=self.hparams.eta_min # minimum learning rate
         )
 
         # 3. Combine with SequentialLR
-        # The milestone is the epoch *after which* the second scheduler starts.
-        # If warmup_epochs is 5, milestone is 5 -> Cosine starts at epoch 6.
+        # The milestone is the step *after which* the second scheduler starts.
+        # If warmup_steps is 1000, milestone is 1000 -> Cosine starts at step 1001.
         lr_scheduler = SequentialLR(
             optimizer,
             schedulers=[warmup_scheduler, cosine_scheduler],
-            milestones=[self.hparams.warmup_epochs]
+            milestones=[self.hparams.warmup_steps]
         )
         # --- End Scheduler Configuration ---
 
         # Configure the dictionary for PyTorch Lightning
         scheduler_config = {
             "scheduler": lr_scheduler,
-            "interval": "epoch", # Tell Lightning to step the scheduler per epoch
-            "frequency": 1,      # Step frequency is 1 (per interval=epoch)
+            "interval": "step", # Tell Lightning to step the scheduler per step (not per epoch)
+            "frequency": 1,     # Step frequency is 1 (per interval=step)
             # "monitor": "val/loss", # Optional: Monitor a metric for ReduceLROnPlateau, not needed here
         }
 

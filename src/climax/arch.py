@@ -159,8 +159,8 @@ class ClimaX(nn.Module):
 
     @lru_cache(maxsize=None)
     def get_var_ids(self, vars, device):
-        ids = np.array([self.var_map[var] for var in vars])
-        return torch.from_numpy(ids).to(device)
+        ids = torch.tensor([self.var_map[var] for var in vars], device=device)
+        return ids
 
     def get_var_emb(self, var_emb, vars):
         ids = self.get_var_ids(vars, var_emb.device)
@@ -205,6 +205,7 @@ class ClimaX(nn.Module):
 
         # tokenize each variable separately
         embeds = []
+
         var_ids = self.get_var_ids(variables, x.device)
 
         if self.parallel_patch_embed:
